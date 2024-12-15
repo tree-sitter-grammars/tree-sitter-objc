@@ -28,7 +28,7 @@
       }
     ],
     "links": {
-      "repository": "https://github.com/amaanq/tree-sitter-objc"
+      "repository": "https://github.com/tree-sitter-grammars/tree-sitter-objc"
     }
   },
   "bindings": {

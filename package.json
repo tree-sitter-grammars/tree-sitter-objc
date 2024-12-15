@@ -30,7 +30,7 @@
   "dependencies": {
     "node-addon-api": "^8.3.0",
     "node-gyp-build": "^4.8.4",
-    "tree-sitter-c": "^0.23.2"
+    "tree-sitter-c": "^0.23.4"
   },
   "devDependencies": {
     "eslint": "^9.17.0",

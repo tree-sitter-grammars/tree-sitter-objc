@@ -4,9 +4,7 @@
  * @license MIT
  */
 
-/* eslint-disable arrow-parens */
-/* eslint-disable camelcase */
-/* eslint-disable-next-line spaced-comment */
+
 /// <reference types="tree-sitter-cli/dsl" />
 // @ts-check
 
@@ -21,14 +19,19 @@ module.exports = grammar(C, {
     $.comment,
   ],
 
-  conflicts: ($, superclass) => superclass.concat([
+  conflicts: ($, original) => original.filter(
+    (e) => !(e.length == 2 && e[0].name == 'type_qualifier' && e[1].name == 'extension_expression'),
+  ).concat([
     [$.enum_specifier],
-    [$._expression_not_binary, $.generic_specifier],
-    [$._declarator, $._type_specifier, $.generic_specifier],
-    [$.attribute, $._expression_not_binary],
+    [$.expression, $.generic_specifier],
+    [$._declarator, $.type_specifier, $.generic_specifier],
+    [$._declarator, $.type_specifier, $.sized_type_specifier],
+    [$.attribute, $.expression],
     [$.parameterized_arguments],
     [$.string_literal],
-    [$.concatenated_string],
+    [$.extension_expression, $.range_expression],
+    [$.abstract_array_declarator, $.array_type_specifier],
+    [$._type_definition_type],
   ]),
 
   inline: ($, original) => original.concat([
@@ -46,7 +49,6 @@ module.exports = grammar(C, {
 
   rules: {
     _top_level_item: ($, original) => choice(
-      // ...original.members.filter(member => member.name !== 'attributed_statement'),
       original,
       $.class_declaration,
       $.class_interface,
@@ -96,27 +98,33 @@ module.exports = grammar(C, {
       'typedef',
       optional($.attribute_specifier),
       optional($.ms_declspec_modifier),
-      repeat($.type_qualifier),
-      optional($.attribute_specifier),
-      field('type', $._type_specifier),
-      optional($.ms_declspec_modifier),
-      repeat($.type_qualifier),
-      commaSep1(field('declarator', $._type_declarator)),
-      optional($._declaration_modifiers),
+      $._type_definition_type,
+      $._type_definition_declarators,
       ';',
     ),
 
+    _type_definition_type: $ => seq(
+      repeat($.type_qualifier),
+      optional($.attribute_specifier),
+      field('type', $.type_specifier),
+      optional($.ms_declspec_modifier),
+      repeat($.type_qualifier),
+    ),
+
+    _type_definition_declarators: $ => seq(
+      commaSep1(field('declarator', $._type_declarator)),
+      optional($._declaration_modifiers),
+    ),
+
     _declaration_modifiers: ($, original) => choice(
-      // ...original.members.filter(member => member.name !== 'attribute_declaration'),
       original,
       $.availability_attribute_specifier,
       $.attribute_declaration,
-      $.alignas_specifier,
     ),
 
     _declaration_specifiers: $ => prec.right(seq(
       repeat($._declaration_modifiers),
-      field('type', $._type_specifier),
+      field('type', $.type_specifier),
       repeat($._declaration_modifiers),
     )),
 
@@ -129,8 +137,7 @@ module.exports = grammar(C, {
     ),
 
     _non_case_statement: ($, original) => choice(
-      // ...original.members.filter(member => member.name !== 'attributed_statement'),
-      original,
+      ...original.members.filter(member => member.name !== 'seh_try_statement' && member.name !== 'seh_leave_statement'),
       $.try_statement,
       $.throw_statement,
       $.synchronized_statement,
@@ -140,7 +147,7 @@ module.exports = grammar(C, {
     attribute: $ => seq(
       optional(seq(field('prefix', $.identifier), '::')),
       field('name', $.identifier),
-      optional(seq('(', commaSep($._expression), ')')),
+      optional(seq('(', commaSep($.expression), ')')),
     ),
 
     attribute_declaration: $ => seq(
@@ -171,16 +178,16 @@ module.exports = grammar(C, {
         '(',
         field('type', choice($.type_descriptor, $.typeof_specifier, $.parameterized_arguments)),
         ')',
-        field('value', $._expression),
+        field('value', $.expression),
       ),
-      seq(choice('__real', '__imag'), field('value', $._expression)),
+      seq(choice('__real', '__imag'), field('value', $.expression)),
     )),
 
     argument_list: $ => seq(
       '(',
       choice(
         commaSep(choice(
-          seq(optional($.type_qualifier), choice($._expression, $.typeof_specifier)),
+          seq(optional($.type_qualifier), choice($.expression, $.typeof_specifier)),
           $.compound_statement,
         )),
         seq($._type_identifier, token.immediate('<'), commaSep1($.type_name), '>'),
@@ -193,18 +200,18 @@ module.exports = grammar(C, {
     objc_bridge: $ => seq(
       'objc_bridge_related',
       '(',
-      $._expression,
+      $.expression,
       ',',
-      optional(seq($._expression, ':')),
+      optional(seq($.expression, ':')),
       ',',
-      optional($._expression),
+      optional($.expression),
       ')',
     ),
 
     typeof_specifier: $ => seq(
       choice('__typeof__', '__typeof', 'typeof'),
       '(',
-      choice($._expression, $.type_descriptor),
+      choice($.expression, $.type_descriptor),
       ')',
     ),
 
@@ -222,7 +229,7 @@ module.exports = grammar(C, {
         $.identifier,
         optional(seq(
           '=',
-          choice($.version, $._expression),
+          choice($.version, $.expression),
         )),
       )),
       ')',
@@ -276,7 +283,7 @@ module.exports = grammar(C, {
           $.identifier,
         ),
         'in',
-        $._expression,
+        $.expression,
         ')',
         $._non_case_statement,
       )),
@@ -337,7 +344,7 @@ module.exports = grammar(C, {
         $.identifier,
         alias($.preproc_call_expression, $.call_expression),
       )),
-      '\n',
+      token.immediate(/\r?\n/),
     ),
 
     module_import: $ => seq(
@@ -354,7 +361,7 @@ module.exports = grammar(C, {
     preproc_undef: $ => seq(
       preprocessor('undef'),
       field('name', $.identifier),
-      '\n',
+      token.immediate(/\r?\n/),
     ),
 
     preproc_linemarker: $ => seq(
@@ -365,7 +372,7 @@ module.exports = grammar(C, {
         field('row', $.number_literal),
         optional(field('column', $.number_literal)),
       )),
-      '\n',
+      token.immediate(/\r?\n/),
     ),
 
     _preproc_expression: ($, original) => choice(
@@ -474,7 +481,7 @@ module.exports = grammar(C, {
 
     enumerator: $ => seq(
       field('name', $.identifier),
-      optional(seq('=', field('value', $._expression))),
+      optional(seq('=', field('value', $.expression))),
     ),
 
     union_specifier: $ => prec.right(seq(
@@ -506,35 +513,52 @@ module.exports = grammar(C, {
     ),
 
     class_interface: $ => seq(
-      repeat($._declaration_modifiers),
-      '@interface',
-      $.identifier,
-      optional(';'),
-      optional($.generic_arguments),
-      optional($.parameterized_arguments),
-      optional(choice(
-        seq(':', field('superclass', $.identifier), optional($.parameterized_arguments)),
-        seq('(', field('category', optional($.identifier)), ')'),
-      )),
+      $._class_interface_header,
+      optional($._type_params),
+      optional($._class_interface_inheritance),
       optional($.parameterized_arguments),
       optional($.instance_variables),
       repeat($.interface_declaration),
       '@end',
     ),
 
-    class_implementation: $ => seq(
+    _class_interface_header: $ => seq(
       repeat($._declaration_modifiers),
-      '@implementation',
+      '@interface',
       $.identifier,
       optional(';'),
-      optional(choice(
-        seq(':', field('superclass', $.identifier)),
-        seq('(', field('category', $.identifier), ')'),
-      )),
+    ),
+
+    _type_params: $ => prec.right(choice(
+      seq($.generic_arguments, optional($.parameterized_arguments)),
+      $.parameterized_arguments,
+    )),
+
+    _class_interface_inheritance: $ => prec.right(1, choice(
+      seq(':', field('superclass', $.identifier), optional($.parameterized_arguments)),
+      seq('(', field('category', optional($.identifier)), ')'),
+    )),
+
+    class_implementation: $ => seq(
+      $._class_implementation_header,
+      optional($._type_params),
+      optional($._class_implementation_inheritance),
       optional($.instance_variables),
       repeat($.implementation_definition),
       '@end',
     ),
+
+    _class_implementation_header: $ => seq(
+      repeat($._declaration_modifiers),
+      '@implementation',
+      $.identifier,
+      optional(';'),
+    ),
+
+    _class_implementation_inheritance: $ => prec(1, choice(
+      seq(':', field('superclass', $.identifier)),
+      seq('(', field('category', $.identifier), ')'),
+    )),
 
     protocol_reference_list: $ => seq('<', commaSep1($.identifier), '>'),
 
@@ -751,13 +775,11 @@ module.exports = grammar(C, {
     atomic_declaration: $ => seq(
       '_Atomic',
       '(',
-      $._type_specifier,
+      $.type_specifier,
       ')',
       $._field_identifier,
       ';',
     ),
-
-    alignas_specifier: $ => seq('_Alignas', '(', $._type_specifier, ')'),
 
     preproc_block: $ => prec.right(seq(
       $.identifier,
@@ -768,14 +790,14 @@ module.exports = grammar(C, {
     )),
 
     specifier_qualifier: $ => prec.right(choice(
-      $._type_specifier,
+      $.type_specifier,
       $.type_qualifier,
       $.protocol_qualifier,
     )),
 
     struct_declarator: $ => choice(
       $._declarator,
-      seq(optional($._declarator), ':', $._expression),
+      seq(optional($._declarator), ':', $.expression),
     ),
 
     field_declaration: $ => seq(
@@ -839,7 +861,7 @@ module.exports = grammar(C, {
 
     throw_statement: $ => seq(
       '@throw',
-      optional($._expression),
+      optional($.expression),
       ';',
     ),
 
@@ -861,7 +883,7 @@ module.exports = grammar(C, {
       ')',
     ),
 
-    range_expression: $ => prec.right(seq($._expression, '...', $._expression)),
+    range_expression: $ => prec.right(seq($.expression, '...', $.expression)),
 
     block_literal: $ => seq(
       '^',
@@ -875,12 +897,12 @@ module.exports = grammar(C, {
 
     message_expression: $ => prec(C.PREC.CALL, seq(
       '[',
-      field('receiver', choice($._expression, $.generic_specifier)),
+      field('receiver', choice($.expression, $.generic_specifier)),
       repeat1(seq(
         field('method', $.identifier),
         repeat(seq(
           ':',
-          commaSep1($._expression),
+          commaSep1($.expression),
         )),
       )),
       ']',
@@ -888,11 +910,11 @@ module.exports = grammar(C, {
 
     parenthesized_expression: $ => seq(
       '(',
-      choice($._expression, $.comma_expression, $.compound_statement),
+      choice($.expression, $.comma_expression, $.compound_statement),
       ')',
     ),
 
-    va_arg_expression: $ => seq('va_arg', '(', $._expression, ',', $.type_descriptor, ')'),
+    va_arg_expression: $ => seq('va_arg', '(', $.expression, ',', $.type_descriptor, ')'),
 
     ms_asm_block: _ => seq(
       '__asm',
@@ -903,7 +925,7 @@ module.exports = grammar(C, {
 
     encode_expression: $ => seq('@encode', '(', $.type_name, ')'),
 
-    synchronized_statement: $ => seq('@synchronized', '(', commaSep1($._expression), ')', $.compound_statement),
+    synchronized_statement: $ => seq('@synchronized', '(', commaSep1($.expression), ')', $.compound_statement),
 
     parenthesized_declarator: $ => prec.dynamic(C.PREC.PAREN_DECLARATOR, seq(
       '(',
@@ -981,7 +1003,7 @@ module.exports = grammar(C, {
       field('declarator', $._declarator),
       optional($.attribute_specifier),
       '=',
-      field('value', choice($.initializer_list, $._expression)),
+      field('value', choice($.initializer_list, $.expression)),
     ),
 
     generic_specifier: $ => prec.right(seq(
@@ -993,7 +1015,7 @@ module.exports = grammar(C, {
       )),
     )),
 
-    _type_specifier: ($, original) => choice(
+    type_specifier: ($, original) => choice(
       original,
       $.typedefed_specifier,
       $.generic_specifier,
@@ -1015,9 +1037,9 @@ module.exports = grammar(C, {
     )),
 
     array_type_specifier: $ => seq(
-      $._type_specifier,
+      $.type_specifier,
       '[',
-      optional(seq(repeat($.type_qualifier), $._expression)),
+      optional(seq(repeat($.type_qualifier), $.expression)),
       ']',
     ),
 
@@ -1050,7 +1072,7 @@ module.exports = grammar(C, {
 
     at_expression: $ => prec.right(seq(
       '@',
-      $._expression,
+      $.expression,
     )),
 
     number_literal: $ => {
@@ -1103,21 +1125,20 @@ module.exports = grammar(C, {
       '}',
     ),
 
-    dictionary_pair: $ => seq($._expression, ':', $._expression),
+    dictionary_pair: $ => seq($.expression, ':', $.expression),
 
     array_literal: $ => seq(
       '@',
       '[',
       optional(seq(
-        commaSep1($._expression),
+        commaSep1($.expression),
         optional(','),
       )),
       ']',
     ),
 
     identifier: _ =>
-      // eslint-disable-next-line max-len
-      /(\$|\p{XID_Start}|_|\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8})(\$|\p{XID_Continue}|\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8})*/,
+      /(\$|\p{XID_Start}|_|\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8})(\$|\p{XID_Continue}|\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8})*/u,
 
     method_identifier: $ => prec.right(seq(
       optional($.identifier),
@@ -1139,15 +1160,6 @@ module.exports = grammar(C, {
       ),
       $.identifier,
     ),
-
-    comment: _ => token(choice(
-      seq('//', /(\\+(.|\r?\n)|[^\\\n])*/),
-      seq(
-        '/*',
-        /[^*]*\*+([^/*][^*]*\*+)*/,
-        '/',
-      ),
-    )),
   },
 });
 
@@ -1157,16 +1169,15 @@ module.exports = grammar(C, {
  *
  * @param {any} content
  *
- * @return {any}
+ * @returns {any}
  */
 function preprocIf(suffix, content) {
   /**
-    *
-    * @param {GrammarSymbols<string>} $
-    *
-    * @return {ChoiceRule}
-    *
-    */
+   *
+   * @param {GrammarSymbols<string>} $
+   *
+   * @returns {ChoiceRule}
+   */
   function elseBlock($) {
     return choice(
       suffix ? alias($['preproc_else' + suffix], $.preproc_else) : $.preproc_else,
@@ -1216,12 +1227,12 @@ function preprocIf(suffix, content) {
 
 
 /**
-  * Creates a preprocessor regex rule
-  *
-  * @param {RegExp|Rule|String} command
-  *
-  * @return {AliasRule}
-  */
+ * Creates a preprocessor regex rule
+ *
+ * @param {RegExp | Rule | string} command
+ *
+ * @returns {AliasRule}
+ */
 function preprocessor(command) {
   return alias(new RegExp('#[ \t]*' + command), '#' + command);
 }
@@ -1231,8 +1242,7 @@ function preprocessor(command) {
  *
  * @param {Rule} rule
  *
- * @return {ChoiceRule}
- *
+ * @returns {ChoiceRule}
  */
 function commaSep(rule) {
   return optional(commaSep1(rule));
@@ -1243,8 +1253,7 @@ function commaSep(rule) {
  *
  * @param {Rule} rule
  *
- * @return {SeqRule}
- *
+ * @returns {SeqRule}
  */
 function commaSep1(rule) {
   return seq(rule, repeat(seq(',', rule)));
@@ -1256,8 +1265,7 @@ function commaSep1(rule) {
  *
  * @param {Rule} rule
  *
- * @return {ChoiceRule}
- *
+ * @returns {ChoiceRule}
  */
 function optionalCommaSep(rule) {
   return optional(optionalCommaSep1(rule));
@@ -1269,8 +1277,7 @@ function optionalCommaSep(rule) {
  *
  * @param {Rule} rule
  *
- * @return {SeqRule}
- *
+ * @returns {SeqRule}
  */
 function optionalCommaSep1(rule) {
   return seq(rule, repeat(seq(optional(','), rule)));

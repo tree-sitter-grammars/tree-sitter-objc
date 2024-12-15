@@ -157,8 +157,8 @@ int main() {
             (string_literal
               (string_content))
             (number_literal)
-            (type_qualifier)
-            (identifier)))))))
+            (extension_expression
+              (identifier))))))))
 
 ================================================================================
 GNU inline assembly

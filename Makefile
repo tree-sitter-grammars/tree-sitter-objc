@@ -4,7 +4,7 @@ endif
 
 LANGUAGE_NAME := tree-sitter-objc
 HOMEPAGE_URL := https://github.com/tree-sitter-grammars/tree-sitter-objc
-VERSION := 3.0.1
+VERSION := 3.0.2
 
 # repository
 SRC_DIR := src

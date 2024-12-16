@@ -1,7 +1,7 @@
 [package]
 name = "tree-sitter-objc"
 description = "Objective-C grammar for tree-sitter"
-version = "3.0.1"
+version = "3.0.2"
 authors = ["Amaan Qureshi <amaanq12@gmail.com>"]
 license = "MIT"
 readme = "README.md"
@@ -14,10 +14,10 @@ autoexamples = false
 build = "bindings/rust/build.rs"
 include = [
   "bindings/rust/*",
-  "grammar.js",
+  "./grammar.js",
   "queries/*",
   "src/*",
-  "tree-sitter.json",
+  "./tree-sitter.json",
 ]
 
 [lib]

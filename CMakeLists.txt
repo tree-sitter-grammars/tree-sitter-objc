@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 
 project(tree-sitter-objc
-        VERSION "2.1.0"
+        VERSION "3.0.0"
         DESCRIPTION "Objective-C grammar for tree-sitter"
         HOMEPAGE_URL "https://github.com/tree-sitter-grammars/tree-sitter-objc"
         LANGUAGES C)

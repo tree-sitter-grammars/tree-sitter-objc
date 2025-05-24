@@ -35,17 +35,11 @@ pub const LANGUAGE: LanguageFn = unsafe { LanguageFn::from_raw(tree_sitter_objc)
 
 /// The content of the [`node-types.json`][] file for this grammar.
 ///
-/// [`node-types.json`]: https://tree-sitter.github.io/tree-sitter/using-parsers#static-node-types
+/// [`node-types.json`]: https://tree-sitter.github.io/tree-sitter/using-parsers/6-static-node-types
 pub const NODE_TYPES: &str = include_str!("../../src/node-types.json");
-
-/// The folds query for this language.
-pub const FOLDS_QUERY: &str = include_str!("../../queries/folds.scm");
 
 /// The syntax highlighting query for this language.
 pub const HIGHLIGHTS_QUERY: &str = include_str!("../../queries/highlights.scm");
-
-/// The indents query for this language.
-pub const INDENTS_QUERY: &str = include_str!("../../queries/indents.scm");
 
 /// The injection query for this language.
 pub const INJECTIONS_QUERY: &str = include_str!("../../queries/injections.scm");

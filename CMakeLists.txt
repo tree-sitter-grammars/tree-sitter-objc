@@ -28,7 +28,10 @@ add_library(tree-sitter-objc src/parser.c)
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/scanner.c)
   target_sources(tree-sitter-objc PRIVATE src/scanner.c)
 endif()
-target_include_directories(tree-sitter-objc PRIVATE src)
+target_include_directories(tree-sitter-objc
+                           PRIVATE src
+                           INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bindings/c>
+                                     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
 target_compile_definitions(tree-sitter-objc PRIVATE
                            $<$<BOOL:${TREE_SITTER_REUSE_ALLOCATOR}>:TREE_SITTER_REUSE_ALLOCATOR>
@@ -46,8 +49,9 @@ configure_file(bindings/c/tree-sitter-objc.pc.in
 
 include(GNUInstallDirs)
 
-install(FILES bindings/c/tree-sitter-objc.h
-        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/tree_sitter")
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bindings/c/tree_sitter"
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+        FILES_MATCHING PATTERN "*.h")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/tree-sitter-objc.pc"
         DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/pkgconfig")
 install(TARGETS tree-sitter-objc

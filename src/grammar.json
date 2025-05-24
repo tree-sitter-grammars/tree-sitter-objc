@@ -16358,5 +16358,6 @@
     "_type_declarator",
     "_abstract_declarator",
     "specifier_qualifier"
-  ]
+  ],
+  "reserved": {}
 }

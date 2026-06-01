@@ -1,0 +1,1182 @@
+// Objective-C grammar for tree-sitter (native DSL).
+// Extends tree-sitter-c.
+
+let c = inherit("../tree-sitter-c/grammar.tsg")
+
+let PREC = {
+    PAREN_DECLARATOR: -10, ASSIGNMENT: -2, CONDITIONAL: -1, DEFAULT: 0,
+    LOGICAL_OR: 1, LOGICAL_AND: 2, INCLUSIVE_OR: 3, EXCLUSIVE_OR: 4,
+    BITWISE_AND: 5, EQUAL: 6, RELATIONAL: 7, OFFSETOF: 8, SHIFT: 9,
+    ADD: 10, MULTIPLY: 11, CAST: 12, SIZEOF: 13, UNARY: 14,
+    CALL: 15, FIELD: 16, SUBSCRIPT: 17,
+}
+
+macro comma_sep1(item: rule_t) rule_t { seq(item, repeat(seq(",", item))) }
+macro comma_sep(item: rule_t) rule_t { optional(comma_sep1(item)) }
+macro optional_comma_sep1(item: rule_t) rule_t { seq(item, repeat(seq(optional(","), item))) }
+macro optional_comma_sep(item: rule_t) rule_t { optional(optional_comma_sep1(item)) }
+
+macro preprocessor(command: str_t) rule_t {
+    alias(regexp(concat("#[ \t]*", command)), concat("#", command))
+}
+
+grammar {
+    language: "objc",
+    inherits: c,
+    extras: [regexp(r"\u00A0|\s|\\\r?\n"), comment],
+
+    // C conflicts minus [type_qualifier, extension_expression], plus objc additions
+    conflicts: [
+        [type_specifier, _declarator],
+        [type_specifier, _declarator, macro_type_specifier],
+        [type_specifier, expression],
+        [type_specifier, expression, macro_type_specifier],
+        [type_specifier, macro_type_specifier],
+        [type_specifier, sized_type_specifier],
+        [sized_type_specifier],
+        [attributed_statement],
+        [_declaration_modifiers, attributed_statement],
+        [enum_specifier],
+        [type_specifier, _old_style_parameter_list],
+        [parameter_list, _old_style_parameter_list],
+        [function_declarator, _function_declaration_declarator],
+        [_block_item, statement],
+        [_top_level_item, _top_level_statement],
+        [type_specifier, _top_level_expression_statement],
+        // objc
+        [enum_specifier],
+        [expression, generic_specifier],
+        [_declarator, type_specifier, generic_specifier],
+        [_declarator, type_specifier, sized_type_specifier],
+        [attribute, expression],
+        [parameterized_arguments],
+        [string_literal],
+        [extension_expression, range_expression],
+        [abstract_array_declarator, array_type_specifier],
+        [_type_definition_type],
+    ],
+
+    inline: append(grammar_config(c, inline), [
+        method_selector, method_selector_no_list, keyword_selector,
+        interface_declaration, typedefed_identifier, keyword_identifier,
+    ]),
+
+    supertypes: append(grammar_config(c, supertypes), [specifier_qualifier]),
+}
+
+// ---------------------------------------------------------------------------
+// Top level extensions
+// ---------------------------------------------------------------------------
+
+override rule _top_level_item {
+    choice(
+        c::_top_level_item,
+        class_declaration, class_interface, class_implementation,
+        protocol_declaration, protocol_forward_declaration, module_import,
+        compatibility_alias_declaration, preproc_undef, preproc_linemarker,
+    )
+}
+
+override rule _block_item {
+    choice(
+        c::_block_item,
+        class_declaration, class_interface, class_implementation,
+        protocol_declaration, protocol_forward_declaration, module_import,
+        compatibility_alias_declaration, preproc_undef, preproc_linemarker,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Declarations
+// ---------------------------------------------------------------------------
+
+override rule function_definition {
+    seq(
+        optional(ms_call_modifier),
+        _declaration_specifiers,
+        field(declarator, _declarator),
+        field(body, compound_statement),
+    )
+}
+
+override rule declaration {
+    seq(
+        _declaration_specifiers,
+        comma_sep1(prec_right(0, field(declarator, choice(
+            seq(_declarator, optional(gnu_asm_expression)),
+            init_declarator,
+            seq(type_qualifier, identifier),
+        )))),
+        optional(_declaration_modifiers),
+        ";",
+    )
+}
+
+override rule type_definition {
+    seq(
+        optional("__extension__"),
+        optional(ms_declspec_modifier),
+        "typedef",
+        optional(attribute_specifier),
+        optional(ms_declspec_modifier),
+        _type_definition_type,
+        _type_definition_declarators,
+        ";",
+    )
+}
+
+override rule _type_definition_type {
+    seq(
+        repeat(type_qualifier),
+        optional(attribute_specifier),
+        field(type, type_specifier),
+        optional(ms_declspec_modifier),
+        repeat(type_qualifier),
+    )
+}
+
+override rule _type_definition_declarators {
+    seq(
+        comma_sep1(field(declarator, _type_declarator)),
+        optional(_declaration_modifiers),
+    )
+}
+
+override rule _declaration_modifiers {
+    choice(c::_declaration_modifiers, availability_attribute_specifier, attribute_declaration)
+}
+
+override rule _declaration_specifiers {
+    prec_right(0, seq(
+        repeat(_declaration_modifiers),
+        field(type, type_specifier),
+        repeat(_declaration_modifiers),
+    ))
+}
+
+override rule parameter_declaration {
+    seq(
+        _declaration_specifiers,
+        optional(field(declarator, choice(
+            seq(_declarator, optional(_declaration_modifiers)),
+            _abstract_declarator,
+        ))),
+    )
+}
+
+// _non_case_statement: C minus seh_try/leave, plus objc statements
+override rule _non_case_statement {
+    choice(
+        attributed_statement, labeled_statement, compound_statement,
+        expression_statement, if_statement, switch_statement,
+        do_statement, while_statement, for_statement,
+        return_statement, break_statement, continue_statement,
+        goto_statement,
+        try_statement, throw_statement, synchronized_statement, ms_asm_block,
+    )
+}
+
+override rule attribute {
+    seq(
+        optional(seq(field(prefix, identifier), "::")),
+        field(name, identifier),
+        optional(seq("(", comma_sep(expression), ")")),
+    )
+}
+
+override rule attribute_declaration {
+    seq("[", "[", comma_sep1(attribute), "]", "]")
+}
+
+override rule _expression_not_binary {
+    choice(
+        c::_expression_not_binary,
+        message_expression, selector_expression, available_expression,
+        range_expression, block_literal, dictionary_literal, array_literal,
+        at_expression, encode_expression, va_arg_expression, keyword_identifier,
+    )
+}
+
+override rule cast_expression {
+    prec(PREC.CAST, choice(
+        seq(
+            "(",
+            field(type, choice(type_descriptor, typeof_specifier, parameterized_arguments)),
+            ")",
+            field(value, expression),
+        ),
+        seq(choice("__real", "__imag"), field(value, expression)),
+    ))
+}
+
+override rule argument_list {
+    seq(
+        "(",
+        choice(
+            comma_sep(choice(
+                seq(optional(type_qualifier), choice(expression, typeof_specifier)),
+                compound_statement,
+            )),
+            seq(_type_identifier, token_immediate("<"), comma_sep1(type_name), ">"),
+            objc_bridge,
+            availability,
+        ),
+        ")",
+    )
+}
+
+rule objc_bridge {
+    seq(
+        "objc_bridge_related",
+        "(",
+        expression, ",",
+        optional(seq(expression, ":")), ",",
+        optional(expression),
+        ")",
+    )
+}
+
+rule typeof_specifier {
+    seq(
+        choice("__typeof__", "__typeof", "typeof"),
+        "(",
+        choice(expression, type_descriptor),
+        ")",
+    )
+}
+
+override rule compound_statement {
+    seq(
+        optional("@autoreleasepool"),
+        "{",
+        repeat(_block_item),
+        "}",
+    )
+}
+
+rule availability {
+    seq(
+        "availability",
+        "(",
+        comma_sep1(seq(
+            identifier,
+            optional(seq("=", choice(version, expression))),
+        )),
+        ")",
+    )
+}
+
+rule version {
+    prec_right(0, choice(
+        platform,
+        version_number,
+        seq(platform, "(", comma_sep1(choice(number_literal, identifier)), ")"),
+    ))
+}
+
+rule version_number { regexp(r"\d+([\._]\d+)*") }
+rule platform { choice("ios", "tvos", "macos", "macosx", "watchos") }
+
+override rule _declarator {
+    prec_right(0, choice(
+        pointer_declarator, function_declarator, array_declarator,
+        parenthesized_declarator, identifier,
+        block_pointer_declarator,
+    ))
+}
+
+override rule _abstract_declarator {
+    choice(c::_abstract_declarator, abstract_block_pointer_declarator)
+}
+
+override rule _field_declarator {
+    choice(c::_field_declarator, alias(block_pointer_field_declarator, block_pointer_declarator))
+}
+
+override rule _type_declarator {
+    choice(
+        alias(pointer_type_declarator, pointer_declarator),
+        alias(function_type_declarator, function_declarator),
+        alias(array_type_declarator, array_declarator),
+        alias(parenthesized_type_declarator, parenthesized_declarator),
+        alias(block_pointer_type_declarator, block_pointer_declarator),
+        _type_identifier,
+        alias(choice("signed", "unsigned", "long", "short"), primitive_type),
+        primitive_type,
+    )
+}
+
+override rule for_statement {
+    choice(
+        c::for_statement,
+        prec(1, seq(
+            "for", "(",
+            choice(
+                seq(_declaration_specifiers, _declarator),
+                identifier,
+            ),
+            "in", expression, ")",
+            _non_case_statement,
+        )),
+    )
+}
+
+override rule type_qualifier {
+    prec_right(0, choice(
+        c::type_qualifier,
+        "nullable", "_Complex", "_Nonnull", "_Nullable", "_Nullable_result",
+        "_Null_unspecified", "__autoreleasing", "__block", "__bridge",
+        "__bridge_retained", "__bridge_transfer", "__complex", "__const",
+        "__imag", "__kindof", "__nonnull", "__nullable",
+        "__ptrauth_objc_class_ro", "__ptrauth_objc_isa_pointer",
+        "__ptrauth_objc_super_pointer", "__real", "__strong",
+        "__unsafe_unretained", "__unused", "__weak",
+    ))
+}
+
+override rule storage_class_specifier {
+    choice(
+        c::storage_class_specifier,
+        "__inline__", "CG_EXTERN", "CG_INLINE",
+        "FOUNDATION_EXPORT", "FOUNDATION_EXTERN", "FOUNDATION_STATIC_INLINE",
+        "IBOutlet", "IBInspectable", "IB_DESIGNABLE",
+        "NS_INLINE", "NS_VALID_UNTIL_END_OF_SCOPE",
+        "OBJC_EXPORT", "OBJC_ROOT_CLASS", "UIKIT_EXTERN",
+    )
+}
+
+override rule preproc_include {
+    seq(
+        field(directive, choice(preprocessor("include"), preprocessor("import"))),
+        field(path, choice(
+            string_literal, system_lib_string, identifier,
+            alias(preproc_call_expression, call_expression),
+        )),
+        token_immediate(regexp(r"\r?\n")),
+    )
+}
+
+rule module_import {
+    seq(
+        "@import",
+        field(path, seq(identifier, repeat(seq(".", identifier)))),
+        ";",
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Preprocessor (override base, add 3 variants)
+// ---------------------------------------------------------------------------
+
+// JS preprocIf: elseBlock = choice(else, elif). if/elif/elifdef have alt=optional(elseBlock).
+// ifdef has alt=optional(choice(elseBlock, preproc_elifdef)) -- elifdef is BARE name only.
+// Suffixed elifdef rules are generated by JS but never referenced, so tree-sitter drops them.
+
+macro preproc_if_body(content: rule_t, else_alt: rule_t, elif_alt: rule_t) rule_t {
+    seq(preprocessor("if"), field(condition, _preproc_expression), "\n", repeat(content),
+        field(alternative, optional(choice(else_alt, elif_alt))), preprocessor("endif"))
+}
+macro preproc_ifdef_body(content: rule_t, else_alt: rule_t, elif_alt: rule_t) rule_t {
+    seq(choice(preprocessor("ifdef"), preprocessor("ifndef")), field(name, identifier), repeat(content),
+        field(alternative, optional(choice(else_alt, elif_alt, preproc_elifdef))), preprocessor("endif"))
+}
+macro preproc_else_body(content: rule_t) rule_t {
+    seq(preprocessor("else"), repeat(content))
+}
+macro preproc_elif_body(content: rule_t, else_alt: rule_t, elif_alt: rule_t) rule_t {
+    seq(preprocessor("elif"), field(condition, _preproc_expression), "\n", repeat(content),
+        field(alternative, optional(choice(else_alt, elif_alt))))
+}
+
+// Base variants
+override rule preproc_if { preproc_if_body(prec(2, choice(_block_item, attribute_specifier, property_implementation)), preproc_else, preproc_elif) }
+override rule preproc_ifdef { preproc_ifdef_body(prec(2, choice(_block_item, attribute_specifier, property_implementation)), preproc_else, preproc_elif) }
+override rule preproc_else { preproc_else_body(prec(2, choice(_block_item, attribute_specifier, property_implementation))) }
+override rule preproc_elif { preproc_elif_body(prec(2, choice(_block_item, attribute_specifier, property_implementation)), preproc_else, preproc_elif) }
+override rule preproc_elifdef {
+    seq(choice(preprocessor("elifdef"), preprocessor("elifndef")),
+        field(name, identifier),
+        repeat(prec(2, choice(_block_item, attribute_specifier, property_implementation))),
+        field(alternative, optional(choice(preproc_else, preproc_elif))))
+}
+
+// _in_implementation_definition variants
+rule preproc_if_in_implementation_definition { preproc_if_body(prec(2, implementation_definition), alias(preproc_else_in_implementation_definition, preproc_else), alias(preproc_elif_in_implementation_definition, preproc_elif)) }
+rule preproc_ifdef_in_implementation_definition { preproc_ifdef_body(prec(2, implementation_definition), alias(preproc_else_in_implementation_definition, preproc_else), alias(preproc_elif_in_implementation_definition, preproc_elif)) }
+rule preproc_else_in_implementation_definition { preproc_else_body(prec(2, implementation_definition)) }
+rule preproc_elif_in_implementation_definition { preproc_elif_body(prec(2, implementation_definition), alias(preproc_else_in_implementation_definition, preproc_else), alias(preproc_elif_in_implementation_definition, preproc_elif)) }
+
+// _in_interface_declaration variants
+rule preproc_if_in_interface_declaration { preproc_if_body(prec(2, interface_declaration), alias(preproc_else_in_interface_declaration, preproc_else), alias(preproc_elif_in_interface_declaration, preproc_elif)) }
+rule preproc_ifdef_in_interface_declaration { preproc_ifdef_body(prec(2, interface_declaration), alias(preproc_else_in_interface_declaration, preproc_else), alias(preproc_elif_in_interface_declaration, preproc_elif)) }
+rule preproc_else_in_interface_declaration { preproc_else_body(prec(2, interface_declaration)) }
+rule preproc_elif_in_interface_declaration { preproc_elif_body(prec(2, interface_declaration), alias(preproc_else_in_interface_declaration, preproc_else), alias(preproc_elif_in_interface_declaration, preproc_elif)) }
+
+// _in_enumerator variants
+rule preproc_if_in_enumerator { preproc_if_body(prec(2, seq(enumerator, ",")), alias(preproc_else_in_enumerator, preproc_else), alias(preproc_elif_in_enumerator, preproc_elif)) }
+rule preproc_ifdef_in_enumerator { preproc_ifdef_body(prec(2, seq(enumerator, ",")), alias(preproc_else_in_enumerator, preproc_else), alias(preproc_elif_in_enumerator, preproc_elif)) }
+rule preproc_else_in_enumerator { preproc_else_body(prec(2, seq(enumerator, ","))) }
+rule preproc_elif_in_enumerator { preproc_elif_body(prec(2, seq(enumerator, ",")), alias(preproc_else_in_enumerator, preproc_else), alias(preproc_elif_in_enumerator, preproc_elif)) }
+
+rule preproc_undef {
+    seq(preprocessor("undef"), field(name, identifier), token_immediate(regexp(r"\r?\n")))
+}
+
+rule preproc_linemarker {
+    seq(
+        "#",
+        number_literal,
+        field(filename, string_literal),
+        optional(seq(
+            field(row, number_literal),
+            optional(field(column, number_literal)),
+        )),
+        token_immediate(regexp(r"\r?\n")),
+    )
+}
+
+override rule _preproc_expression {
+    choice(c::_preproc_expression, system_lib_string)
+}
+
+override rule preproc_params {
+    seq(token_immediate("("), comma_sep(choice(identifier, "...")), optional("..."), ")")
+}
+
+override rule attribute_specifier {
+    seq(
+        choice("__attribute__", "__attribute"),
+        "(",
+        choice(argument_list, seq("(", comma_sep1(choice("noreturn", "nothrow")), ")")),
+        ")",
+    )
+}
+
+rule availability_attribute_specifier {
+    choice(
+        "NS_AUTOMATED_REFCOUNT_UNAVAILABLE", "NS_ROOT_CLASS", "NS_UNAVAILABLE",
+        "NS_REQUIRES_NIL_TERMINATION", "CF_RETURNS_RETAINED", "CF_RETURNS_NOT_RETAINED",
+        "DEPRECATED_ATTRIBUTE", "UI_APPEARANCE_SELECTOR", "UNAVAILABLE_ATTRIBUTE",
+        seq(
+            choice(
+                "CF_FORMAT_FUNCTION", "NS_AVAILABLE", "__IOS_AVAILABLE",
+                "NS_AVAILABLE_IOS", "API_AVAILABLE", "API_UNAVAILABLE",
+                "API_DEPRECATED", "NS_ENUM_AVAILABLE_IOS", "NS_DEPRECATED_IOS",
+                "NS_ENUM_DEPRECATED_IOS", "NS_FORMAT_FUNCTION",
+                "DEPRECATED_MSG_ATTRIBUTE", "__deprecated_msg", "__deprecated_enum_msg",
+                "NS_SWIFT_NAME", "NS_SWIFT_UNAVAILABLE",
+                "NS_EXTENSION_UNAVAILABLE_IOS", "NS_CLASS_AVAILABLE_IOS",
+                "NS_CLASS_DEPRECATED_IOS", "__OSX_AVAILABLE_STARTING",
+            ),
+            "(",
+            comma_sep1(choice(
+                string_literal, concatenated_string, version,
+                method_identifier, identifier,
+                seq(identifier, "(", optional(method_identifier), ")"),
+            )),
+            ")",
+        ),
+    )
+}
+
+override rule struct_specifier {
+    prec_right(0, seq(
+        "struct",
+        optional(attribute_specifier),
+        optional(ms_declspec_modifier),
+        choice(
+            seq(field(name, _type_identifier), field(body, optional(field_declaration_list))),
+            field(body, field_declaration_list),
+        ),
+        optional(attribute_specifier),
+    ))
+}
+
+override rule enum_specifier {
+    seq(
+        "enum",
+        optional(attribute_specifier),
+        optional(ms_declspec_modifier),
+        choice(
+            seq(
+                field(name, _type_identifier),
+                optional(seq(":", field(underlying_type, choice(_type_identifier, primitive_type)))),
+                field(body, optional(enumerator_list)),
+            ),
+            seq(
+                optional(seq(":", field(base, _type_identifier))),
+                field(body, enumerator_list),
+            ),
+        ),
+        optional(attribute_specifier),
+    )
+}
+
+override rule enumerator_list {
+    seq(
+        "{",
+        optional_comma_sep(choice(
+            seq(enumerator, optional(_declaration_modifiers)),
+            alias(preproc_ifdef_in_enumerator, preproc_ifdef),
+        )),
+        optional(","),
+        "}",
+    )
+}
+
+override rule enumerator {
+    seq(field(name, identifier), optional(seq("=", field(value, expression))))
+}
+
+override rule union_specifier {
+    prec_right(0, seq(
+        "union",
+        optional(attribute_specifier),
+        optional(ms_declspec_modifier),
+        choice(
+            seq(field(name, _type_identifier), field(body, optional(field_declaration_list))),
+            field(body, field_declaration_list),
+        ),
+        optional(attribute_specifier),
+    ))
+}
+
+rule protocol_forward_declaration {
+    seq(repeat(_declaration_modifiers), "@protocol", comma_sep1(identifier), ";")
+}
+
+rule class_declaration {
+    seq(
+        "@", "class",
+        comma_sep1(seq(identifier, optional(parameterized_arguments))),
+        ";",
+    )
+}
+
+rule class_interface {
+    seq(
+        _class_interface_header,
+        optional(_type_params),
+        optional(_class_interface_inheritance),
+        optional(parameterized_arguments),
+        optional(instance_variables),
+        repeat(interface_declaration),
+        "@end",
+    )
+}
+
+rule _class_interface_header {
+    seq(repeat(_declaration_modifiers), "@interface", identifier, optional(";"))
+}
+
+rule _type_params {
+    prec_right(0, choice(
+        seq(generic_arguments, optional(parameterized_arguments)),
+        parameterized_arguments,
+    ))
+}
+
+rule _class_interface_inheritance {
+    prec_right(1, choice(
+        seq(":", field(superclass, identifier), optional(parameterized_arguments)),
+        seq("(", field(category, optional(identifier)), ")"),
+    ))
+}
+
+rule class_implementation {
+    seq(
+        _class_implementation_header,
+        optional(_type_params),
+        optional(_class_implementation_inheritance),
+        optional(instance_variables),
+        repeat(implementation_definition),
+        "@end",
+    )
+}
+
+rule _class_implementation_header {
+    seq(repeat(_declaration_modifiers), "@implementation", identifier, optional(";"))
+}
+
+rule _class_implementation_inheritance {
+    prec(1, choice(
+        seq(":", field(superclass, identifier)),
+        seq("(", field(category, identifier), ")"),
+    ))
+}
+
+rule protocol_reference_list { seq("<", comma_sep1(identifier), ">") }
+
+rule parameterized_arguments {
+    prec(-1, seq(
+        "<",
+        choice(
+            comma_sep1(seq(
+                comma_sep1(seq(optional(choice("__covariant", "__contravariant")), _type_identifier)),
+                optional(seq(":", type_name)),
+            )),
+            comma_sep1(type_name),
+        ),
+        ">",
+    ))
+}
+
+rule generic_arguments {
+    prec_right(0, seq("(", comma_sep1(_type_identifier), ")"))
+}
+
+rule instance_variables {
+    seq(
+        "{",
+        repeat(seq(
+            optional(choice(attribute_specifier, attribute_declaration)),
+            instance_variable,
+        )),
+        "}",
+        optional(";"),
+    )
+}
+
+rule instance_variable {
+    choice(visibility_specification, struct_declaration, atomic_declaration, preproc_ifdef, preproc_if)
+}
+
+rule visibility_specification {
+    choice("@private", "@protected", "@package", "@public")
+}
+
+rule protocol_declaration {
+    seq(
+        repeat(_declaration_modifiers),
+        "@protocol",
+        identifier,
+        optional(protocol_reference_list),
+        repeat(interface_declaration),
+        repeat(qualified_protocol_interface_declaration),
+        "@end",
+    )
+}
+
+rule compatibility_alias_declaration {
+    seq("@compatibility_alias", field(class, identifier), field(alias, identifier))
+}
+
+rule interface_declaration {
+    choice(
+        declaration, property_declaration, method_declaration,
+        function_definition, type_definition,
+        alias(preproc_if_in_interface_declaration, preproc_if),
+        preproc_def, preproc_ifdef, preproc_undef, preproc_call,
+        seq(struct_specifier, ";"),
+    )
+}
+
+rule qualified_protocol_interface_declaration {
+    choice(
+        seq("@optional", repeat(interface_declaration)),
+        seq("@required", repeat(interface_declaration)),
+    )
+}
+
+rule implementation_definition {
+    prec(1, choice(
+        function_definition, declaration, property_implementation,
+        seq(struct_specifier, ";"),
+        method_definition, preproc_function_def, macro_type_specifier,
+        type_definition,
+        alias(preproc_if_in_implementation_definition, preproc_if),
+        preproc_ifdef, preproc_undef, preproc_def, preproc_call,
+    ))
+}
+
+rule property_implementation {
+    choice(
+        seq("@synthesize", comma_sep1(seq(identifier, optional(seq("=", identifier)))), ";"),
+        seq("@dynamic", optional("(class)"), comma_sep1(identifier), ";"),
+    )
+}
+
+rule method_definition {
+    seq(
+        choice("+", "-"),
+        optional(method_type),
+        optional(attribute_specifier),
+        choice(
+            seq(
+                method_selector_no_list,
+                optional(seq(
+                    method_parameter,
+                    repeat(seq(optional(method_selector), method_parameter)),
+                )),
+            ),
+            seq(
+                method_parameter,
+                repeat(seq(optional(method_selector), method_parameter)),
+            ),
+        ),
+        optional(seq(",", choice("...", comma_sep1(alias(c_method_parameter, method_parameter))))),
+        repeat(declaration),
+        repeat(_declaration_modifiers),
+        optional(";"),
+        compound_statement,
+        optional(";"),
+    )
+}
+
+rule method_type {
+    seq(
+        "(",
+        comma_sep1(seq(optional(attribute_specifier), choice(type_name, parameterized_arguments))),
+        ")",
+    )
+}
+
+rule method_selector {
+    prec_left(0, choice(method_selector_no_list, seq(keyword_selector, ",")))
+}
+
+rule method_selector_no_list {
+    choice(identifier, keyword_selector, seq(keyword_selector, ",", "..."))
+}
+
+rule keyword_selector { repeat1(keyword_declarator) }
+
+rule keyword_declarator {
+    seq(optional(identifier), ";", optional(method_type), identifier)
+}
+
+rule property_declaration {
+    seq(
+        optional(_declaration_modifiers),
+        "@property",
+        optional(property_attributes_declaration),
+        optional(choice(attribute_specifier, attribute_declaration)),
+        choice(struct_declaration, atomic_declaration),
+    )
+}
+
+rule property_attributes_declaration {
+    seq("(", comma_sep(property_attribute), ")")
+}
+
+rule property_attribute {
+    choice(identifier, seq(identifier, "=", identifier, optional(":")))
+}
+
+rule method_declaration {
+    seq(
+        choice("+", "-"),
+        optional(method_type),
+        optional(choice(attribute_specifier, attribute_declaration)),
+        repeat1(choice(
+            seq(method_selector, optional(attribute_specifier), optional(method_parameter)),
+            method_parameter,
+        )),
+        optional(seq(",", choice("...", comma_sep1(alias(c_method_parameter, method_parameter))))),
+        repeat(_declaration_modifiers),
+        repeat1(prec_right(0, ";")),
+    )
+}
+
+rule method_parameter {
+    prec_right(0, seq(
+        ":",
+        optional(method_type),
+        optional(_declaration_modifiers),
+        choice(identifier, keyword_identifier),
+        repeat(_declaration_modifiers),
+    ))
+}
+
+rule c_method_parameter {
+    prec_left(0, seq(
+        _declaration_specifiers,
+        comma_sep1(prec_right(0, field(declarator, choice(_declarator, init_declarator)))),
+    ))
+}
+
+rule struct_declaration {
+    seq(
+        repeat1(specifier_qualifier),
+        comma_sep1(struct_declarator),
+        optional(_declaration_modifiers),
+        ";",
+    )
+}
+
+rule atomic_declaration {
+    seq("_Atomic", "(", type_specifier, ")", _field_identifier, ";")
+}
+
+rule preproc_block {
+    prec_right(0, seq(identifier, "\n", repeat(_block_item), identifier, "\n"))
+}
+
+rule specifier_qualifier {
+    prec_right(0, choice(type_specifier, type_qualifier, protocol_qualifier))
+}
+
+rule struct_declarator {
+    choice(_declarator, seq(optional(_declarator), ":", expression))
+}
+
+override rule field_declaration {
+    seq(
+        _declaration_specifiers,
+        comma_sep(seq(
+            field(declarator, choice(_field_declarator, enum_specifier)),
+            optional(bitfield_clause),
+        )),
+        optional(bitfield_clause),
+        optional(attribute_specifier),
+        ";",
+    )
+}
+
+override rule function_declarator {
+    prec_right(1, seq(
+        field(declarator, _declarator),
+        field(parameters, parameter_list),
+        optional(gnu_asm_expression),
+        repeat(attribute_specifier),
+    ))
+}
+
+override rule function_field_declarator {
+    prec_right(1, seq(
+        field(declarator, _field_declarator),
+        field(parameters, parameter_list),
+        repeat(choice(attribute_specifier, type_qualifier)),
+    ))
+}
+
+override rule function_type_declarator {
+    prec_right(1, seq(
+        field(declarator, _type_declarator),
+        field(parameters, parameter_list),
+        repeat(choice(attribute_specifier, type_qualifier)),
+    ))
+}
+
+override rule abstract_function_declarator {
+    prec_right(1, seq(
+        field(declarator, optional(_abstract_declarator)),
+        field(parameters, parameter_list),
+        repeat(choice(attribute_specifier, type_qualifier)),
+    ))
+}
+
+override rule _top_level_expression_statement {
+    seq(optional(_expression_not_binary), ";")
+}
+
+rule try_statement {
+    seq(
+        choice("@try", "__try"),
+        compound_statement,
+        choice(
+            seq(repeat1(catch_clause), optional(finally_clause)),
+            finally_clause,
+        ),
+    )
+}
+
+rule catch_clause {
+    seq(
+        choice("@catch", "__catch"),
+        optional(seq("(", choice("...", type_name), ")")),
+        compound_statement,
+    )
+}
+
+rule finally_clause {
+    seq(choice("@finally", "__finally"), compound_statement)
+}
+
+rule throw_statement { seq("@throw", optional(expression), ";") }
+
+rule selector_expression {
+    prec_left(0, seq(
+        "@selector",
+        repeat1("("),
+        choice(identifier, method_identifier, prec(-1, regexp(r"[^)]*"))),
+        repeat1(")"),
+    ))
+}
+
+rule available_expression {
+    seq(
+        choice("@available", "__builtin_available"),
+        "(",
+        comma_sep1(choice(identifier, seq(identifier, version), "*")),
+        ")",
+    )
+}
+
+rule range_expression {
+    prec_right(0, seq(expression, "...", expression))
+}
+
+rule block_literal {
+    seq(
+        "^",
+        optional(attribute_specifier),
+        optional(type_name),
+        optional(attribute_specifier),
+        optional(parameter_list),
+        optional(attribute_specifier),
+        compound_statement,
+    )
+}
+
+rule message_expression {
+    prec(PREC.CALL, seq(
+        "[",
+        field(receiver, choice(expression, generic_specifier)),
+        repeat1(seq(
+            field(method, identifier),
+            repeat(seq(":", comma_sep1(expression))),
+        )),
+        "]",
+    ))
+}
+
+override rule parenthesized_expression {
+    seq("(", choice(expression, comma_expression, compound_statement), ")")
+}
+
+rule va_arg_expression {
+    seq("va_arg", "(", expression, ",", type_descriptor, ")")
+}
+
+rule ms_asm_block {
+    seq("__asm", "{", regexp(r"[^}]*"), "}")
+}
+
+rule encode_expression { seq("@encode", "(", type_name, ")") }
+
+rule synchronized_statement {
+    seq("@synchronized", "(", comma_sep1(expression), ")", compound_statement)
+}
+
+override rule parenthesized_declarator {
+    prec_dynamic(PREC.PAREN_DECLARATOR, seq(
+        "(", repeat(_declaration_modifiers), _declarator, ")",
+    ))
+}
+
+override rule parenthesized_field_declarator {
+    prec_dynamic(PREC.PAREN_DECLARATOR, seq(
+        "(", repeat(_declaration_modifiers), _field_declarator, ")",
+    ))
+}
+
+override rule parenthesized_type_declarator {
+    prec_dynamic(PREC.PAREN_DECLARATOR, seq(
+        "(", repeat(_declaration_modifiers), _type_declarator, ")",
+    ))
+}
+
+override rule abstract_parenthesized_declarator {
+    prec(1, seq(
+        "(", repeat(_declaration_modifiers), _abstract_declarator, ")",
+    ))
+}
+
+override rule pointer_declarator {
+    prec_dynamic(1, prec_right(0, seq(
+        optional(ms_based_modifier),
+        "*",
+        repeat(ms_pointer_modifier),
+        repeat(_declaration_modifiers),
+        field(declarator, _declarator),
+    )))
+}
+
+override rule pointer_field_declarator {
+    prec_dynamic(1, prec_right(0, seq(
+        optional(ms_based_modifier),
+        "*",
+        repeat(ms_pointer_modifier),
+        repeat(_declaration_modifiers),
+        field(declarator, _field_declarator),
+    )))
+}
+
+override rule pointer_type_declarator {
+    prec_dynamic(1, prec_right(0, seq(
+        optional(ms_based_modifier),
+        "*",
+        repeat(ms_pointer_modifier),
+        repeat(_declaration_modifiers),
+        field(declarator, _type_declarator),
+    )))
+}
+
+override rule abstract_pointer_declarator {
+    prec_dynamic(1, prec_right(0, seq(
+        "*",
+        repeat(_declaration_modifiers),
+        field(declarator, optional(_abstract_declarator)),
+    )))
+}
+
+rule block_pointer_declarator {
+    prec_dynamic(1, prec_right(0, seq(
+        "^", repeat(type_qualifier), field(declarator, _declarator),
+    )))
+}
+
+rule block_pointer_field_declarator {
+    prec_dynamic(1, prec_right(0, seq(
+        "^", repeat(type_qualifier), field(declarator, _field_declarator),
+    )))
+}
+
+rule block_pointer_type_declarator {
+    prec_dynamic(1, prec_right(0, seq(
+        "^", repeat(type_qualifier), field(declarator, _type_declarator),
+    )))
+}
+
+rule abstract_block_pointer_declarator {
+    prec_dynamic(1, prec_right(0, seq(
+        "^", repeat(type_qualifier), field(declarator, optional(_abstract_declarator)),
+    )))
+}
+
+override rule init_declarator {
+    seq(
+        field(declarator, _declarator),
+        optional(attribute_specifier),
+        "=",
+        field(value, choice(initializer_list, expression)),
+    )
+}
+
+rule generic_specifier {
+    prec_right(0, seq(
+        _type_identifier,
+        repeat1(seq("<", comma_sep1(type_name), ">")),
+    ))
+}
+
+override rule type_specifier {
+    choice(
+        c::type_specifier,
+        typedefed_specifier, generic_specifier, typeof_specifier, array_type_specifier,
+    )
+}
+
+rule typedefed_identifier { choice("BOOL", "IMP", "SEL", "Class", "id") }
+
+rule typedefed_specifier {
+    prec_right(0, seq(typedefed_identifier, optional(protocol_reference_list)))
+}
+
+rule array_type_specifier {
+    seq(
+        type_specifier,
+        "[",
+        optional(seq(repeat(type_qualifier), expression)),
+        "]",
+    )
+}
+
+rule atdef_field { seq("@defs", "(", identifier, ")") }
+
+override rule _field_declaration_list_item {
+    choice(
+        field_declaration, preproc_def, preproc_function_def, preproc_call,
+        alias(preproc_if_in_field_declaration_list, preproc_if),
+        alias(preproc_ifdef_in_field_declaration_list, preproc_ifdef),
+        atdef_field,
+    )
+}
+
+rule protocol_qualifier {
+    choice("out", "inout", "bycopy", "byref", "oneway", "in")
+}
+
+rule type_name {
+    prec_right(0, seq(
+        repeat1(prec_right(0, choice(specifier_qualifier, attribute_specifier, _declarator))),
+        optional(protocol_reference_list),
+        optional(_abstract_declarator),
+    ))
+}
+
+rule at_expression {
+    prec_right(0, seq("@", expression))
+}
+
+override rule number_literal {
+    token(seq(
+        optional(regexp(r"[-\+]")),
+        optional(choice("0x", "0b")),
+        choice(
+            seq(
+                choice(
+                    seq(repeat1(regexp(r"[0-9]")), repeat(seq("'", repeat1(regexp(r"[0-9]"))))),
+                    seq("0b", seq(repeat1(regexp(r"[0-9]")), repeat(seq("'", repeat1(regexp(r"[0-9]")))))),
+                    seq("0x", seq(repeat1(regexp(r"[0-9a-fA-F]")), repeat(seq("'", repeat1(regexp(r"[0-9a-fA-F]")))))),
+                ),
+                optional(seq(".", optional(seq(repeat1(regexp(r"[0-9a-fA-F]")), repeat(seq("'", repeat1(regexp(r"[0-9a-fA-F]")))))))),
+            ),
+            seq(".", seq(repeat1(regexp(r"[0-9]")), repeat(seq("'", repeat1(regexp(r"[0-9]")))))),
+        ),
+        optional(seq(
+            regexp(r"[eEpP]"),
+            optional(seq(
+                optional(regexp(r"[-\+]")),
+                seq(repeat1(regexp(r"[0-9a-fA-F]")), repeat(seq("'", repeat1(regexp(r"[0-9a-fA-F]"))))),
+            )),
+        )),
+        repeat(choice("i", "u", "l", "U", "L", "f", "F")),
+    ))
+}
+
+override rule string_literal {
+    seq(
+        choice(seq("@", "\""), "L\"", "u\"", "U\"", "u8\"", "\""),
+        repeat(choice(
+            alias(token_immediate(prec(1, regexp(r#"[^\\"\n]+"#))), string_content),
+            escape_sequence,
+        )),
+        "\"",
+    )
+}
+
+rule dictionary_literal {
+    seq(
+        "@", "{",
+        optional(seq(comma_sep1(dictionary_pair), optional(","))),
+        "}",
+    )
+}
+
+rule dictionary_pair { seq(expression, ":", expression) }
+
+rule array_literal {
+    seq(
+        "@", "[",
+        optional(seq(comma_sep1(expression), optional(","))),
+        "]",
+    )
+}
+
+override rule identifier {
+    regexp(r"(\$|\p{XID_Start}|_|\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8})(\$|\p{XID_Continue}|\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8})*")
+}
+
+rule method_identifier {
+    prec_right(0, seq(
+        optional(identifier),
+        repeat1(token_immediate(":")),
+        repeat(seq(identifier, repeat1(token_immediate(":")))),
+    ))
+}
+
+rule keyword_identifier {
+    alias(prec(-3, choice("id", "in", "struct", "const")), identifier)
+}
